@@ -277,7 +277,7 @@ def simulate(data: dict):
 
 
 # =========================
-# GET EXPLANATION
+#  EXPLANATION
 # =========================
 @app.get("/explanation/{request_id}")
 def get_explanation(request_id: str):
