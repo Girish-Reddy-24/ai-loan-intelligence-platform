@@ -36,14 +36,23 @@ MODEL_PATH = "models/"
 # LOAD MODEL
 # =========================
 def load_latest_model():
-    files = [f for f in os.listdir(MODEL_PATH) if f.endswith(".pkl")]
-    latest_model = sorted(files)[-1]
-    path = os.path.join(MODEL_PATH, latest_model)
+    try:
+        files = [f for f in os.listdir(MODEL_PATH) if f.endswith(".pkl")]
 
-    model = joblib.load(path)
-    print(f"[INFO] Loaded model: {latest_model}")
-    return model
+        if not files:
+            print("⚠️ No model found. Using dummy mode.")
+            return None
 
+        latest_model = sorted(files)[-1]
+        path = os.path.join(MODEL_PATH, latest_model)
+
+        model = joblib.load(path)
+        print(f"[INFO] Loaded model: {latest_model}")
+        return model
+
+    except Exception as e:
+        print("❌ Model loading failed:", e)
+        return None
 
 model = load_latest_model()
 
@@ -174,11 +183,12 @@ def predict(data: dict, background_tasks: BackgroundTasks):
     # -------------------------
     prediction = model.predict(df)[0]
 
-    try:
-        shap_explanation = get_shap_explanation(model, df)
-    except:
-        shap_explanation = []
-
+    if model:
+       prediction = model.predict(df)[0]
+       confidence = float(max(model.predict_proba(df)[0]))
+    else:
+       prediction = 1 if data["credit_score"] > 650 else 0
+       confidence = 0.5
     # -------------------------
     # 🔥 FIXED DECISION LOGIC
     # -------------------------
