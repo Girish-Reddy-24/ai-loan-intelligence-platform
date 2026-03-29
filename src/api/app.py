@@ -1,6 +1,6 @@
 from src.engine.loan_optimizer import optimize_loan_amount
 from src.engine.simulation_engine import simulate_loan
-from src.explainability.shap_explainer import get_shap_explanation
+
 from fastapi import FastAPI, BackgroundTasks
 import joblib
 import os
@@ -15,6 +15,14 @@ from src.agents.offer_agent import generate_offer
 from src.agents.bias_agent import detect_bias
 from src.utils.logger import log_prediction
 from src.agents.risk_engine import calculate_risk, get_risk_tier, recommend_loan
+
+try:
+    from src.explainability.shap_explainer import get_shap_explanation
+except:
+    def get_shap_explanation(model, df):
+        return []
+
+
 
 app = FastAPI()
 
