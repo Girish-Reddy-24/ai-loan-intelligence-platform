@@ -1,0 +1,6 @@
+# Ignore large data & models
+data/
+models/
+logs/
+__pycache__/
+*.pyc
