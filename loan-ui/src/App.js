@@ -24,7 +24,7 @@ function App() {
 
   const handleSubmit = async () => {
     try {
-      const res = await axios.post("http://127.0.0.1:8000/predict", form);
+      const res = await axios.post("https://ai-loan-intelligence-platform.onrender.com/predict", form);
       setResult(res.data);
       setExplanation(null);
       setSimulation(null);
@@ -36,7 +36,7 @@ function App() {
   const getExplanation = async () => {
     try {
       const res = await axios.get(
-        `http://127.0.0.1:8000/explanation/${result.request_id}`
+        `https://ai-loan-intelligence-platform.onrender.com/explanation/${result.request_id}`
       );
 
       setExplanation(res.data.explanation);
@@ -48,7 +48,7 @@ function App() {
   const runSimulation = async () => {
     try {
       const res = await axios.post(
-        "http://127.0.0.1:8000/simulate",
+        "https://ai-loan-intelligence-platform.onrender.com/simulate",
         {
           ...form,
 
