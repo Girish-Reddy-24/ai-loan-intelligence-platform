@@ -10,7 +10,6 @@ import json
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.features.feature_engineering import clean_data, feature_engineering, encode_categorical
-from src.agents.risk_agent import assess_risk 
 from src.agents.offer_agent import generate_offer
 from src.agents.bias_agent import detect_bias
 from src.utils.logger import log_prediction
@@ -23,11 +22,10 @@ except:
         return []
 
 
-
 app = FastAPI()
 
 # =========================
-# CORS FIX
+# CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
@@ -48,7 +46,7 @@ def load_latest_model():
         files = [f for f in os.listdir(MODEL_PATH) if f.endswith(".pkl")]
 
         if not files:
-            print("⚠️ No model found. Using dummy mode.")
+            print("⚠️ No model found")
             return None
 
         latest_model = sorted(files)[-1]
@@ -62,6 +60,7 @@ def load_latest_model():
         print("❌ Model loading failed:", e)
         return None
 
+
 model = load_latest_model()
 
 
@@ -74,7 +73,7 @@ def home():
 
 
 # =========================
-# REASONS ENGINE
+# REASONS
 # =========================
 def generate_reasons(data, result):
     reasons = []
@@ -82,8 +81,10 @@ def generate_reasons(data, result):
     dti = (data["monthly_expenses"] + data["existing_debt_payments_monthly"]) / data["monthly_income"]
     lti = data["loan_amount"] / data["annual_income"]
 
-    if dti > 0.4:
+    if dti > 0.6:
         reasons.append("High debt-to-income ratio")
+    elif dti > 0.4:
+        reasons.append("Moderate debt-to-income ratio")
 
     if lti > 1:
         reasons.append("Loan amount too high compared to income")
@@ -94,20 +95,19 @@ def generate_reasons(data, result):
     if data["credit_score"] > 750:
         reasons.append("Excellent credit score")
 
-    if result == "Approved" and len(reasons) == 0:
+    if result == "Approved" and not reasons:
         reasons.append("Strong financial profile")
 
     return reasons
 
 
 # =========================
-# ASYNC EXPLANATION
+# EXPLANATION (ASYNC)
 # =========================
-def generate_explanation_async(request_id, result, data):
+def generate_explanation_async(request_id, result, data, shap_values):
     from src.llm.explainer import generate_explanation
 
-    print("🚀 Generating explanation...")
-    explanation = generate_explanation(result, data)
+    explanation = generate_explanation(result, data, shap_values)
 
     file_path = "data/explanations.json"
 
@@ -125,8 +125,10 @@ def generate_explanation_async(request_id, result, data):
     with open(file_path, "w") as f:
         json.dump(records, f, indent=2)
 
-    print(f"✅ Saved for {request_id}")
 
+# =========================
+# INTERNAL LOGIC (USED BY OPTIMIZER)
+# =========================
 def internal_predict_logic(data):
     dti = (data["monthly_expenses"] + data["existing_debt_payments_monthly"]) / data["monthly_income"]
     lti = data["loan_amount"] / data["annual_income"]
@@ -140,16 +142,15 @@ def internal_predict_logic(data):
     elif lti > 2:
         return "Rejected"
 
-    elif data["credit_score"] >= 720 and dti < 0.4 and lti < 1.5:
+    elif data["credit_score"] >= 720 and dti < 0.4:
         return "Approved"
 
-    elif data["credit_score"] >= 680 and dti < 0.5 and lti < 1.5:
+    elif data["credit_score"] >= 680 and dti < 0.5:
         return "Approved"
 
     else:
         return "Rejected"
 
-   
 
 # =========================
 # PREDICT API
@@ -157,9 +158,7 @@ def internal_predict_logic(data):
 @app.post("/predict")
 def predict(data: dict, background_tasks: BackgroundTasks):
 
-    # =========================
-    # SAFE DEFAULTS (VERY IMPORTANT)
-    # =========================
+    # DEFAULTS
     data.setdefault("num_credit_accounts", 5)
     data.setdefault("property_value", 300000)
     data.setdefault("existing_debt_payments_monthly", 0)
@@ -178,27 +177,24 @@ def predict(data: dict, background_tasks: BackgroundTasks):
     model_features = model.get_booster().feature_names
 
     missing_cols = list(set(model_features) - set(df.columns))
-
     if missing_cols:
         df_missing = pd.DataFrame(0, index=df.index, columns=missing_cols)
         df = pd.concat([df, df_missing], axis=1)
 
     df = df[model_features]
-    df = df.copy()
 
     # -------------------------
     # MODEL
     # -------------------------
-    prediction = model.predict(df)[0]
-
     if model:
-       prediction = model.predict(df)[0]
-       confidence = float(max(model.predict_proba(df)[0]))
+        prediction = model.predict(df)[0]
+        confidence = float(max(model.predict_proba(df)[0]))
     else:
-       prediction = 1 if data["credit_score"] > 650 else 0
-       confidence = 0.5
+        prediction = 1 if data["credit_score"] > 650 else 0
+        confidence = 0.5
+
     # -------------------------
-    # 🔥 FIXED DECISION LOGIC
+    # DECISION ENGINE (FINAL)
     # -------------------------
     dti = (data["monthly_expenses"] + data["existing_debt_payments_monthly"]) / data["monthly_income"]
     lti = data["loan_amount"] / data["annual_income"]
@@ -209,49 +205,49 @@ def predict(data: dict, background_tasks: BackgroundTasks):
     elif dti > 0.7:
         result = "Rejected"
 
-    elif lti > 2.5:
+    elif lti > 2:
         result = "Rejected"
 
-    elif data["credit_score"] > 700 and dti < 0.6 and lti < 1.5:
+    elif data["credit_score"] >= 700 and dti < 0.6 and lti < 1:
         result = "Approved"
 
-    elif data["credit_score"] >= 650 and dti < 0.7:
+    elif data["credit_score"] >= 650 and dti < 0.6:
         result = "Approved"
 
     else:
-        result = "Approved" if prediction == 1 else "Rejected"
+        result = "Rejected"
 
     # -------------------------
-    # REASONS
+    # RISK (ALIGNED)
+    # -------------------------
+    if dti > 0.7 or lti > 2:
+        risk_level = "High Risk"
+    elif dti < 0.4 and data["credit_score"] > 720:
+        risk_level = "Low Risk"
+    else:
+        risk_level = "Medium Risk"
+
+    # 🔥 FINAL GUARDRAIL
+    if risk_level == "High Risk":
+        result = "Rejected"
+
+    # -------------------------
+    # OTHER COMPONENTS
     # -------------------------
     reasons = generate_reasons(data, result)
-
-    # -------------------------
-    # AGENTS
-    # -------------------------
-    try:
-        risk_level = assess_risk(data)
-    except:
-        risk_level = "Unknown"
 
     offer = generate_offer(result, data)
     bias_flags = detect_bias(data, result)
 
-    # -------------------------
-    # RISK ENGINE
-    # -------------------------
     risk_score = calculate_risk(data)
     risk_tier = get_risk_tier(risk_score)
     recommended_loan = recommend_loan(data)
 
-    # -------------------------
-    # CONFIDENCE
-    # -------------------------
-    confidence = float(max(model.predict_proba(df)[0]))
+    try:
+        shap_explanation = get_shap_explanation(model, df)
+    except:
+        shap_explanation = []
 
-    # =========================
-    # 🔥 LOAN OPTIMIZER
-    # =========================
     optimizer_result = optimize_loan_amount(data, internal_predict_logic)
 
     # -------------------------
@@ -269,13 +265,19 @@ def predict(data: dict, background_tasks: BackgroundTasks):
         "confidence_score": round(confidence, 2),
         "reasons": reasons,
         "shap_explanation": shap_explanation,
-        "explanation": "Click 'Get Explanation'",
         "loan_optimizer": optimizer_result,
+        "explanation": "Click 'Get Explanation'"
     }
 
     log_prediction(data, response)
 
-    background_tasks.add_task(generate_explanation_async, request_id, result, data)
+    background_tasks.add_task(
+        generate_explanation_async,
+        request_id,
+        result,
+        data,
+        shap_explanation
+    )
 
     return response
 
@@ -285,7 +287,6 @@ def predict(data: dict, background_tasks: BackgroundTasks):
 # =========================
 @app.post("/simulate")
 def simulate(data: dict):
-
     simulation_result = simulate_loan(data)
 
     return {
@@ -295,7 +296,7 @@ def simulate(data: dict):
 
 
 # =========================
-#  EXPLANATION
+# GET EXPLANATION
 # =========================
 @app.get("/explanation/{request_id}")
 def get_explanation(request_id: str):
