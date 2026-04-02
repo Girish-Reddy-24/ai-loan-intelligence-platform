@@ -58,15 +58,23 @@ def predict(data: dict, background_tasks: BackgroundTasks):
         dti = (expenses + debt) / income
         lti = loan / (income * 12)
 
-        # =========================
-        # DECISION LOGIC
-        # =========================
+       # =========================
+       # DECISION LOGIC (FIXED)
+       # =========================
+
+        max_safe_loan = income * 12 * 0.5
+
         if credit < 550 or dti > 0.7 or lti > 2:
             result = "Rejected"
+
+        elif loan > max_safe_loan:
+            result = "Rejected"
+
         elif credit >= 700 and dti < 0.6:
             result = "Approved"
+
         else:
-            result = "Rejected"
+            result = "Rejected"s
 
         # =========================
         # RISK
