@@ -27,7 +27,6 @@ function App() {
   // VALIDATION + PREDICT
   // =========================
   const handleSubmit = async () => {
-    // ✅ VALIDATION
     if (!form.annual_income || form.annual_income <= 0) {
       alert("Enter valid annual income");
       return;
@@ -46,32 +45,51 @@ function App() {
     try {
       const res = await axios.post(
         "https://ai-loan-intelligence-platform.onrender.com/predict",
-        form
+        {
+          ...form,
+
+          // ✅ ALWAYS send monthly income
+          monthly_income: form.annual_income / 12,
+
+          existing_debt_payments_monthly:
+            form.existing_debt_payments_monthly || 0
+        }
       );
 
       setResult(res.data);
       setSimulation(null);
-    } catch {
+    } catch (err) {
+      console.error(err);
       alert("Backend error");
     }
   };
 
   // =========================
-  // SIMULATION
+  // SIMULATION (FIXED)
   // =========================
   const runSimulation = async () => {
+    if (!form.annual_income || form.annual_income <= 0) {
+      alert("Enter annual income first");
+      return;
+    }
+
     try {
       const res = await axios.post(
         "https://ai-loan-intelligence-platform.onrender.com/simulate",
         {
           ...form,
+
+          // ✅ CRITICAL FIX
+          monthly_income: form.annual_income / 12,
+
           existing_debt_payments_monthly:
             form.existing_debt_payments_monthly || 0
         }
       );
 
       setSimulation(res.data.simulation);
-    } catch {
+    } catch (err) {
+      console.error(err);
       alert("Simulation error");
     }
   };
@@ -87,7 +105,7 @@ function App() {
         onChange={handleChange}
       /><br />
 
-      {/* ✅ AUTO CALCULATED MONTHLY */}
+      {/* ✅ AUTO MONTHLY DISPLAY */}
       {form.annual_income > 0 && (
         <p>
           Monthly Income: <b>${Math.round(form.annual_income / 12)}</b>
