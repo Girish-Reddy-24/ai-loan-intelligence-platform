@@ -74,7 +74,7 @@ def predict(data: dict, background_tasks: BackgroundTasks):
             result = "Approved"
 
         else:
-            result = "Rejected"s
+            result = "Rejected"
 
         # =========================
         # RISK
