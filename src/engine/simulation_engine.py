@@ -15,15 +15,24 @@ def simulate_loan(data):
     # =========================
     # APPROVAL PROBABILITY
     # =========================
-    prob = 0.6  # realistic base
+    # Align probability with decision strength
+    prob = 0.85 if credit >= 700 and dti < 0.5 else 0.6
 
     # DTI impact
     if dti > 0.6:
         prob -= 0.4
-    elif dti > 0.4:
+    elif dti > 0.5:
         prob -= 0.2
-    else:
+
+    if credit < 650:
+        prob -= 0.3
+    elif credit >= 750:
         prob += 0.1
+
+    if lti > 1:
+        prob -= 0.3
+    elif lti < 0.5:
+        prob += 0.05
 
     # Credit impact
     if credit < 600:
