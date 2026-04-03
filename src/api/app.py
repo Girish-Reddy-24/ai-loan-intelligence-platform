@@ -36,21 +36,49 @@ app.add_middleware(
 )
 
 # =========================
-# SIMPLE SAFE PREDICT (NO CRASH)
+# HELPER (SAFE FLOAT)
+# =========================
+def safe_float(val):
+    try:
+        return float(val)
+    except:
+        return 0.0
+
+# =========================
+# PREDICT (PRODUCTION SAFE)
 # =========================
 @app.post("/predict")
 def predict(data: dict, background_tasks: BackgroundTasks):
 
     try:
-        # SAFE INPUT
-        income = float(data.get("monthly_income", 0))
-        expenses = float(data.get("monthly_expenses", 0))
-        loan = float(data.get("loan_amount", 0))
-        credit = float(data.get("credit_score", 0))
-        debt = float(data.get("existing_debt_payments_monthly", 0))
+        # =========================
+        # INPUT HANDLING
+        # =========================
+        annual_income = safe_float(data.get("annual_income"))
+        monthly_income_input = safe_float(data.get("monthly_income"))
 
-        if income == 0:
-            return {"error": "Invalid income"}
+        # ✅ AUTO FIX (no inconsistency)
+        if annual_income > 0:
+            income = annual_income / 12
+        else:
+            income = monthly_income_input
+
+        expenses = safe_float(data.get("monthly_expenses"))
+        loan = safe_float(data.get("loan_amount"))
+        credit = safe_float(data.get("credit_score"))
+        debt = safe_float(data.get("existing_debt_payments_monthly"))
+
+        # =========================
+        # VALIDATION
+        # =========================
+        if income <= 0:
+            return {"error": "Income must be greater than 0"}
+
+        if loan <= 0:
+            return {"error": "Loan must be greater than 0"}
+
+        if credit < 300 or credit > 900:
+            return {"error": "Credit score must be between 300-900"}
 
         # =========================
         # CALCULATIONS
@@ -58,10 +86,9 @@ def predict(data: dict, background_tasks: BackgroundTasks):
         dti = (expenses + debt) / income
         lti = loan / (income * 12)
 
-       # =========================
-       # DECISION LOGIC (FIXED)
-       # =========================
-
+        # =========================
+        # DECISION LOGIC (FIXED)
+        # =========================
         max_safe_loan = income * 12 * 0.5
 
         if credit < 550 or dti > 0.7 or lti > 2:
@@ -96,8 +123,13 @@ def predict(data: dict, background_tasks: BackgroundTasks):
             "prediction": result,
             "risk_level": risk,
             "confidence_score": 0.9,
-            "reasons": ["Calculated based on financial ratios"],
-            "loan_optimizer": {"max_safe_loan": int(income * 12 * 0.5)},
+            "reasons": [
+                f"DTI: {round(dti,2)}",
+                f"LTI: {round(lti,2)}"
+            ],
+            "loan_optimizer": {
+                "max_safe_loan": int(max_safe_loan)
+            },
             "explanation": "Click Get Explanation"
         }
 
