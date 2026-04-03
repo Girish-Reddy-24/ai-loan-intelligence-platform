@@ -1,13 +1,13 @@
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from src.llm.explainer import generate_explanation
 import os
-import pandas as pd
 import uuid
-import json
+import joblib
 
+# ✅ KEEP THIS IMPORT (DO NOT CHANGE)
 from src.engine.simulation_engine import simulate_loan
 
 app = FastAPI()
@@ -36,7 +36,20 @@ app.add_middleware(
 )
 
 # =========================
-# HELPER (SAFE FLOAT)
+# LOAD MODEL (SAFE)
+# =========================
+MODEL_PATH = "models/loan_model.pkl"
+model = None
+
+if os.path.exists(MODEL_PATH):
+    try:
+        model = joblib.load(MODEL_PATH)
+        print("✅ ML Model Loaded")
+    except Exception as e:
+        print("❌ Model load failed:", e)
+
+# =========================
+# HELPER
 # =========================
 def safe_float(val):
     try:
@@ -45,10 +58,49 @@ def safe_float(val):
         return 0.0
 
 # =========================
-# PREDICT (PRODUCTION SAFE)
+# AI EXPLANATION
+# =========================
+def generate_explanation(prediction, dti, lti, credit):
+    text = f"Loan Decision: {prediction}\n\n"
+
+    text += "Financial Summary:\n"
+    text += f"- Debt-to-Income (DTI): {round(dti,2)}\n"
+    text += f"- Loan-to-Income (LTI): {round(lti,2)}\n"
+    text += f"- Credit Score: {credit}\n\n"
+
+    text += "Explanation:\n"
+
+    if prediction == "Approved":
+        text += "The loan was approved because your financial profile is stable.\n"
+
+        if dti < 0.5:
+            text += "- Your debt-to-income ratio is manageable.\n"
+
+        if credit >= 700:
+            text += "- Strong credit history supports approval.\n"
+
+        if lti < 0.5:
+            text += "- Loan amount is reasonable relative to income.\n"
+
+    else:
+        text += "The loan was rejected due to higher financial risk.\n"
+
+        if dti > 0.6:
+            text += "- A large portion of your income is already committed.\n"
+
+        if lti > 1:
+            text += "- Loan amount is too high compared to income.\n"
+
+        if credit < 650:
+            text += "- Credit score indicates higher risk.\n"
+
+    return text
+
+# =========================
+# PREDICT
 # =========================
 @app.post("/predict")
-def predict(data: dict, background_tasks: BackgroundTasks):
+def predict(data: dict):
 
     try:
         # =========================
@@ -57,11 +109,7 @@ def predict(data: dict, background_tasks: BackgroundTasks):
         annual_income = safe_float(data.get("annual_income"))
         monthly_income_input = safe_float(data.get("monthly_income"))
 
-        # ✅ AUTO FIX (no inconsistency)
-        if annual_income > 0:
-            income = annual_income / 12
-        else:
-            income = monthly_income_input
+        income = annual_income / 12 if annual_income > 0 else monthly_income_input
 
         expenses = safe_float(data.get("monthly_expenses"))
         loan = safe_float(data.get("loan_amount"))
@@ -77,7 +125,7 @@ def predict(data: dict, background_tasks: BackgroundTasks):
         if loan <= 0:
             return {"error": "Loan must be greater than 0"}
 
-        if credit < 300 or credit > 900:
+        if not (300 <= credit <= 900):
             return {"error": "Credit score must be between 300-900"}
 
         # =========================
@@ -87,7 +135,7 @@ def predict(data: dict, background_tasks: BackgroundTasks):
         lti = loan / (income * 12)
 
         # =========================
-        # DECISION LOGIC (FIXED)
+        # SAFE LOAN
         # =========================
         disposable_income = income - expenses - debt
 
@@ -96,17 +144,32 @@ def predict(data: dict, background_tasks: BackgroundTasks):
         else:
             max_safe_loan = disposable_income * 12 * 0.6
 
-        if credit < 550 or dti > 0.7 or lti > 2:
-            result = "Rejected"
+        # =========================
+        # ML PREDICTION (SAFE)
+        # =========================
+        ml_prediction = None
 
-        elif loan > max_safe_loan:
-            result = "Rejected"
+        if model:
+            try:
+                features = [[income, expenses, loan, credit, debt]]
+                ml_prediction = model.predict(features)[0]
+            except Exception as e:
+                print("ML error:", e)
 
-        elif credit >= 700 and dti < 0.6:
-            result = "Approved"
-
+        # =========================
+        # FINAL DECISION
+        # =========================
+        if ml_prediction is not None:
+            result = "Approved" if ml_prediction == 1 else "Rejected"
         else:
-            result = "Rejected"
+            if credit < 550 or dti > 0.7 or lti > 2:
+                result = "Rejected"
+            elif loan > max_safe_loan:
+                result = "Rejected"
+            elif credit >= 700 and dti < 0.6:
+                result = "Approved"
+            else:
+                result = "Rejected"
 
         # =========================
         # RISK
@@ -117,6 +180,11 @@ def predict(data: dict, background_tasks: BackgroundTasks):
             risk = "Low Risk"
         else:
             risk = "Medium Risk"
+
+        # =========================
+        # EXPLANATION
+        # =========================
+        explanation = generate_explanation(result, dti, lti, credit)
 
         request_id = str(uuid.uuid4())
 
@@ -135,7 +203,7 @@ def predict(data: dict, background_tasks: BackgroundTasks):
             "loan_optimizer": {
                 "max_safe_loan": int(max_safe_loan)
             },
-            "explanation": "Click Get Explanation"
+            "explanation": generate_explanation(result, dti, lti, credit)
         }
 
     except Exception as e:
@@ -148,10 +216,3 @@ def predict(data: dict, background_tasks: BackgroundTasks):
 @app.post("/simulate")
 def simulate(data: dict):
     return {"simulation": simulate_loan(data)}
-
-# =========================
-# EXPLANATION (SAFE)
-# =========================
-@app.get("/explanation/{request_id}")
-def get_explanation(request_id: str):
-    return {"explanation": "Explanation will be added soon"}
